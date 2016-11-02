@@ -15,11 +15,14 @@ package com.facebook.presto.server;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Iterators;
 
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.List;
 
 import static java.util.Objects.requireNonNull;
@@ -27,32 +30,37 @@ import static java.util.Objects.requireNonNull;
 class PluginClassLoader
         extends URLClassLoader
 {
-    private final ClassLoader spiClassLoader;
-    private final List<String> spiPackages;
-    private final List<String> spiResources;
+    private final List<String> hiddenClasses;
+    private final List<String> parentFirstClasses;
+    private final List<String> hiddenResources;
+    private final List<String> parentFirstResources;
 
-    public PluginClassLoader(
-            List<URL> urls,
-            ClassLoader spiClassLoader,
-            Iterable<String> spiPackages)
+    public PluginClassLoader(List<URL> urls,
+            ClassLoader parent,
+            Iterable<String> hiddenClasses,
+            Iterable<String> parentFirstClasses)
     {
         this(urls,
-                spiClassLoader,
-                spiPackages,
-                Iterables.transform(spiPackages, PluginClassLoader::classNameToResource));
+                parent,
+                hiddenClasses,
+                parentFirstClasses,
+                Iterables.transform(hiddenClasses, PluginClassLoader::classNameToResource),
+                Iterables.transform(parentFirstClasses, PluginClassLoader::classNameToResource));
     }
 
-    private PluginClassLoader(
-            List<URL> urls,
-            ClassLoader spiClassLoader,
-            Iterable<String> spiPackages,
-            Iterable<String> spiResources)
+    public PluginClassLoader(List<URL> urls,
+            ClassLoader parent,
+            Iterable<String> hiddenClasses,
+            Iterable<String> parentFirstClasses,
+            Iterable<String> hiddenResources,
+            Iterable<String> parentFirstResources)
     {
-        // use a null parent to prevent delegation to the system class loader
-        super(urls.toArray(new URL[urls.size()]), null);
-        this.spiClassLoader = requireNonNull(spiClassLoader, "spiClassLoader is null");
-        this.spiPackages = ImmutableList.copyOf(spiPackages);
-        this.spiResources = ImmutableList.copyOf(spiResources);
+        // child first requires a parent class loader
+        super(urls.toArray(new URL[urls.size()]), requireNonNull(parent, "parent is null"));
+        this.hiddenClasses = ImmutableList.copyOf(hiddenClasses);
+        this.parentFirstClasses = ImmutableList.copyOf(parentFirstClasses);
+        this.hiddenResources = ImmutableList.copyOf(hiddenResources);
+        this.parentFirstResources = ImmutableList.copyOf(parentFirstResources);
     }
 
     @Override
@@ -67,13 +75,35 @@ class PluginClassLoader
                 return resolveClass(cachedClass, resolve);
             }
 
-            // If this is an SPI class, only check SPI class loader
-            if (isSpiClass(name)) {
-                return resolveClass(spiClassLoader.loadClass(name), resolve);
+            // If this is not a parent first class, look for the class locally
+            if (!isParentFirstClass(name)) {
+                try {
+                    Class<?> clazz = findClass(name);
+                    return resolveClass(clazz, resolve);
+                }
+                catch (ClassNotFoundException ignored) {
+                    // not a local class
+                }
             }
 
-            // Look for class locally
-            return super.loadClass(name, resolve);
+            // Check parent class loader for parent first or non-hidden classes
+            if (isParentFirstClass(name) || !isHiddenClass(name)) {
+                try {
+                    Class<?> clazz = getParent().loadClass(name);
+                    return resolveClass(clazz, resolve);
+                }
+                catch (ClassNotFoundException ignored) {
+                    // this parent didn't have the class
+                }
+            }
+
+            // If this is a parent first class, now look for the class locally
+            if (isParentFirstClass(name)) {
+                Class<?> clazz = findClass(name);
+                return resolveClass(clazz, resolve);
+            }
+
+            throw new ClassNotFoundException(name);
         }
     }
 
@@ -85,41 +115,103 @@ class PluginClassLoader
         return clazz;
     }
 
+    private boolean isParentFirstClass(String name)
+    {
+        for (String nonOverridableClass : parentFirstClasses) {
+            // todo maybe make this more precise and only match base package
+            if (name.startsWith(nonOverridableClass)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isHiddenClass(String name)
+    {
+        for (String hiddenClass : hiddenClasses) {
+            // todo maybe make this more precise and only match base package
+            if (name.startsWith(hiddenClass)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public URL getResource(String name)
     {
-        // If this is an SPI resource, only check SPI class loader
-        if (isSpiResource(name)) {
-            return spiClassLoader.getResource(name);
+        // If this is not a parent first resource, check local resources first
+        if (!isParentFirstResource(name)) {
+            URL url = findResource(name);
+            if (url != null) {
+                return url;
+            }
         }
 
-        // Look for resource locally
-        return super.getResource(name);
+        // Check parent class loaders
+        if (!isHiddenResource(name)) {
+            URL url = getParent().getResource(name);
+            if (url != null) {
+                return url;
+            }
+        }
+
+        // If this is a parent first resource, now check local resources
+        if (isParentFirstResource(name)) {
+            URL url = findResource(name);
+            if (url != null) {
+                return url;
+            }
+        }
+
+        return null;
     }
 
     @Override
     public Enumeration<URL> getResources(String name)
             throws IOException
     {
-        // If this is an SPI resource, use SPI resources
-        if (isSpiClass(name)) {
-            return spiClassLoader.getResources(name);
+        List<Iterator<URL>> resources = new ArrayList<>();
+
+        // If this is not a parent first resource, add resources from local urls first
+        if (!isParentFirstResource(name)) {
+            Iterator<URL> myResources = Iterators.forEnumeration(findResources(name));
+            resources.add(myResources);
         }
 
-        // Use local resources
-        return super.getResources(name);
+        // Add parent resources
+        if (!isHiddenResource(name)) {
+            Iterator<URL> parentResources = Iterators.forEnumeration(getParent().getResources(name));
+            resources.add(parentResources);
+        }
+
+        // If this is a parent first resource, now add resources from local urls
+        if (isParentFirstResource(name)) {
+            Iterator<URL> myResources = Iterators.forEnumeration(findResources(name));
+            resources.add(myResources);
+        }
+
+        return Iterators.asEnumeration(Iterators.concat(resources.iterator()));
     }
 
-    private boolean isSpiClass(String name)
+    private boolean isParentFirstResource(String name)
     {
-        // todo maybe make this more precise and only match base package
-        return spiPackages.stream().anyMatch(name::startsWith);
+        for (String nonOverridableResource : parentFirstResources) {
+            if (name.startsWith(nonOverridableResource)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    private boolean isSpiResource(String name)
+    private boolean isHiddenResource(String name)
     {
-        // todo maybe make this more precise and only match base package
-        return spiResources.stream().anyMatch(name::startsWith);
+        for (String hiddenResource : hiddenResources) {
+            if (name.startsWith(hiddenResource)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String classNameToResource(String className)

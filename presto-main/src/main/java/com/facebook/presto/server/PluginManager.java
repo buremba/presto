@@ -31,6 +31,7 @@ import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.type.TypeRegistry;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Ordering;
+import com.google.inject.Injector;
 import io.airlift.configuration.ConfigurationFactory;
 import io.airlift.http.server.HttpServerInfo;
 import io.airlift.log.Logger;
@@ -62,12 +63,17 @@ import static java.util.Objects.requireNonNull;
 @ThreadSafe
 public class PluginManager
 {
-    private static final ImmutableList<String> SPI_PACKAGES = ImmutableList.<String>builder()
-            .add("com.facebook.presto.spi.")
-            .add("com.fasterxml.jackson.annotation.")
-            .add("io.airlift.slice.")
-            .add("io.airlift.units.")
-            .add("org.openjdk.jol.")
+    private static final List<String> HIDDEN_CLASSES = ImmutableList.<String>builder()
+            .add("org.slf4j")
+            .build();
+
+    private static final ImmutableList<String> PARENT_FIRST_CLASSES = ImmutableList.<String>builder()
+            .add("com.facebook.presto")
+            .add("com.fasterxml.jackson")
+            .add("io.airlift.slice")
+            .add("javax.inject")
+            .add("javax.annotation")
+            .add("java.")
             .build();
 
     private static final Logger log = Logger.get(PluginManager.class);
@@ -84,9 +90,11 @@ public class PluginManager
     private final List<String> plugins;
     private final AtomicBoolean pluginsLoading = new AtomicBoolean();
     private final AtomicBoolean pluginsLoaded = new AtomicBoolean();
+    private final Injector injector;
 
     @Inject
     public PluginManager(
+            Injector injector,
             NodeInfo nodeInfo,
             HttpServerInfo httpServerInfo,
             PluginManagerConfig config,
@@ -118,6 +126,7 @@ public class PluginManager
         this.resourceGroupManager = requireNonNull(resourceGroupManager, "resourceGroupManager is null");
         this.accessControlManager = requireNonNull(accessControlManager, "accessControlManager is null");
         this.eventListenerManager = requireNonNull(eventListenerManager, "eventListenerManager is null");
+        this.injector = requireNonNull(injector, "injector is null");
         this.blockEncodingManager = requireNonNull(blockEncodingManager, "blockEncodingManager is null");
         this.typeRegistry = requireNonNull(typeRegistry, "typeRegistry is null");
     }
@@ -178,6 +187,8 @@ public class PluginManager
 
     public void installPlugin(Plugin plugin)
     {
+        injector.injectMembers(plugin);
+
         for (BlockEncodingFactory<?> blockEncodingFactory : plugin.getBlockEncodingFactories(blockEncodingManager)) {
             log.info("Registering block encoding %s", blockEncodingFactory.getName());
             blockEncodingManager.addBlockEncodingFactory(blockEncodingFactory);
@@ -286,7 +297,7 @@ public class PluginManager
     private URLClassLoader createClassLoader(List<URL> urls)
     {
         ClassLoader parent = getClass().getClassLoader();
-        return new PluginClassLoader(urls, parent, SPI_PACKAGES);
+        return new PluginClassLoader(urls, parent, HIDDEN_CLASSES, PARENT_FIRST_CLASSES);
     }
 
     private static List<File> listFiles(File installedPluginsDir)
