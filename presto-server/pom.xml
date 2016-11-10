@@ -23,22 +23,4 @@
         <main-class>com.facebook.presto.server.PrestoServer</main-class>
         <process-name>${project.artifactId}</process-name>
     </properties>
-
-    <repositories>
-        <repository>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-            <id>bintray-buremba-maven</id>
-            <name>bintray</name>
-            <url>http://dl.bintray.com/buremba/maven</url>
-        </repository>
-    </repositories>
-
-    <distributionManagement>
-        <repository>
-            <id>bintray-repo-maven</id>
-            <url>https://api.bintray.com/maven/buremba/maven/presto-server/;publish=1</url>
-        </repository>
-    </distributionManagement>
 </project>
