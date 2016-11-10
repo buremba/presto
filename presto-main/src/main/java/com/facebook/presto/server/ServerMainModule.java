@@ -165,20 +165,8 @@ public class ServerMainModule
     {
         ServerConfig serverConfig = buildConfigObject(ServerConfig.class);
 
-        if (serverConfig.isCoordinator()) {
-            install(new CoordinatorModule());
-            binder.bind(new TypeLiteral<Optional<QueryPerformanceFetcher>>(){}).toProvider(QueryPerformanceFetcherProvider.class).in(Scopes.SINGLETON);
-        }
-        else {
-            binder.bind(new TypeLiteral<Optional<QueryPerformanceFetcher>>(){}).toInstance(Optional.empty());
-            // Install no-op resource group manager on workers, since only coordinators manage resource groups.
-            binder.bind(ResourceGroupManager.class).to(NoOpResourceGroupManager.class).in(Scopes.SINGLETON);
-
-            // HACK: this binding is needed by SystemConnectorModule, but will only be used on the coordinator
-            binder.bind(QueryManager.class).toInstance(newProxy(QueryManager.class, (proxy, method, args) -> {
-                throw new UnsupportedOperationException();
-            }));
-        }
+        install(new CoordinatorModule(serverConfig.isCoordinator()));
+        binder.bind(new TypeLiteral<Optional<QueryPerformanceFetcher>>() {}).toProvider(QueryPerformanceFetcherProvider.class).in(Scopes.SINGLETON);
 
         configBinder(binder).bindConfig(FeaturesConfig.class);
 

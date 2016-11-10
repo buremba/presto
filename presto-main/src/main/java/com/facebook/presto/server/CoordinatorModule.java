@@ -125,13 +125,24 @@ import static org.weakref.jmx.guice.ExportBinder.newExporter;
 public class CoordinatorModule
         extends AbstractConfigurationAwareModule
 {
+    private final boolean coordinator;
+
+    public CoordinatorModule(boolean coordinator)
+    {
+        this.coordinator = coordinator;
+    }
+
     @Override
     protected void setup(Binder binder)
     {
-        httpServerBinder(binder).bindResource("/", "webapp").withWelcomeFile("index.html");
+        if(coordinator) {
+            httpServerBinder(binder).bindResource("/", "webapp").withWelcomeFile("index.html");
+        }
 
         // presto coordinator announcement
-        discoveryBinder(binder).bindHttpAnnouncement("presto-coordinator");
+        if(coordinator) {
+            discoveryBinder(binder).bindHttpAnnouncement("presto-coordinator");
+        }
 
         // statement resource
         jsonCodecBinder(binder).bindJsonCodec(QueryInfo.class);
@@ -140,13 +151,15 @@ public class CoordinatorModule
         jaxrsBinder(binder).bind(StatementResource.class);
 
         // execute resource
-        jaxrsBinder(binder).bind(ExecuteResource.class);
-        httpClientBinder(binder).bindHttpClient("execute", ForExecute.class)
-                .withTracing()
-                .withConfigDefaults(config -> {
-                    config.setIdleTimeout(new Duration(30, SECONDS));
-                    config.setRequestTimeout(new Duration(10, SECONDS));
-                });
+        if(coordinator) {
+            jaxrsBinder(binder).bind(ExecuteResource.class);
+            httpClientBinder(binder).bindHttpClient("execute", ForExecute.class)
+                    .withTracing()
+                    .withConfigDefaults(config -> {
+                        config.setIdleTimeout(new Duration(30, SECONDS));
+                        config.setRequestTimeout(new Duration(10, SECONDS));
+                    });
+        }
 
         // query execution visualizer
         jaxrsBinder(binder).bind(QueryExecutionResource.class);
