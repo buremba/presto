@@ -19,10 +19,6 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-
-import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
 
 public class FileOrcDataSource
         extends AbstractOrcDataSource
@@ -50,7 +46,6 @@ public class FileOrcDataSource
 //        FileChannel channel = this.input.getChannel();
 //        MappedByteBuffer mem = channel.map(READ_ONLY, position + bufferOffset, bufferLength);
 //        mem.get(buffer);
-//
         input.seek(position);
         input.readFully(buffer, bufferOffset, bufferLength);
     }

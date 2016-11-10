@@ -135,12 +135,12 @@ public class CoordinatorModule
     @Override
     protected void setup(Binder binder)
     {
-        if(coordinator) {
+        if (coordinator) {
             httpServerBinder(binder).bindResource("/", "webapp").withWelcomeFile("index.html");
         }
 
         // presto coordinator announcement
-        if(coordinator) {
+        if (coordinator) {
             discoveryBinder(binder).bindHttpAnnouncement("presto-coordinator");
         }
 
@@ -151,7 +151,7 @@ public class CoordinatorModule
         jaxrsBinder(binder).bind(StatementResource.class);
 
         // execute resource
-        if(coordinator) {
+        if (coordinator) {
             jaxrsBinder(binder).bind(ExecuteResource.class);
             httpClientBinder(binder).bindHttpClient("execute", ForExecute.class)
                     .withTracing()
